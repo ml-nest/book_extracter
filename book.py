@@ -1,6 +1,7 @@
 import os
 import re
 import io
+import argparse
 from urllib.parse import urlparse, urljoin
 
 import requests
@@ -23,6 +24,11 @@ def _download_image(src: str, image_dir: str, headers: dict, base_url: str,
     """Resolve, download and save an image; return its local filepath or None."""
     if src.startswith("//"):
         src = "https:" + src
+
+
+
+
+          
     elif src.startswith("/"):
         parsed = urlparse(base_url)
         src = f"{parsed.scheme}://{parsed.netloc}{src}"
@@ -194,10 +200,10 @@ def extract_content_from_url(url: str, image_dir: str = "images") -> list:
         )
     }
     response = requests.get(url, headers=headers, timeout=15)
+
     response.raise_for_status()
 
     soup = BeautifulSoup(response.text, "html.parser")
-
     # Remove clearly non-content tags
     for tag in soup(["script", "style", "nav", "footer", "header",
                      "noscript", "aside", "iframe", "form"]):
@@ -460,12 +466,92 @@ def save_to_word(elements: list, output_path: str = "output.docx") -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
-    BASE_URL = (
-        "https://www.flexiprep.com/ICSE-Solutions/Mathematics/ML-Aggarwal-Class-7"
-        "/ICSE-ML-Aggarwal-Solutions-Class-7-Mathematics-Chapter-14-Symmetry-Part-{}.html"
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Extract book content from a base URL pattern and part count."
     )
-    PARTS = 4
+    parser.add_argument(
+        "--last-link",
+        dest="last_link",
+        help="Last part URL. The script will derive BASE URL, PARTS, and default output name from it.",
+    )
+    parser.add_argument(
+        "--base-url",
+        dest="base_url",
+        help="Base URL pattern. Use '{}' where the part number should be inserted.",
+    )
+    parser.add_argument(
+        "--parts",
+        dest="parts",
+        type=int,
+        help="Number of parts to fetch.",
+    )
+    parser.add_argument(
+        "--output",
+        dest="output",
+        default="output.docx",
+        help="Output Word document path.",
+    )
+    return parser.parse_args()
+
+
+def _derive_inputs_from_last_link(last_link: str) -> tuple[str, int, str]:
+    match = re.search(r"^(.*-Part-)(\d+)(\.html?)$", last_link.strip(), re.IGNORECASE)
+    if not match:
+        raise ValueError(
+            "Last link must end with a part number like '-Part-16.html'."
+        )
+
+    base_url = f"{match.group(1)}{{}}{match.group(3)}"
+    parts = int(match.group(2))
+
+    chapter_match = re.search(
+        r"(Chapter-\d+-[^/]+)-Part-\d+\.html?$",
+        last_link.strip(),
+        re.IGNORECASE,
+    )
+    if chapter_match:
+        output_path = f"{chapter_match.group(1)}.docx"
+    else:
+        output_path = "output.docx"
+
+    return base_url, parts, output_path
+
+
+def _resolve_inputs() -> tuple[str, int, str]:
+    args = _parse_args()
+
+    if args.last_link:
+        base_url, parts, derived_output = _derive_inputs_from_last_link(args.last_link)
+        output_path = args.output if args.output != "output.docx" else derived_output
+        return base_url, parts, output_path
+
+    last_link = input("Enter last part link (or press Enter to use BASE URL): ").strip()
+    if last_link:
+        base_url, parts, derived_output = _derive_inputs_from_last_link(last_link)
+        output_path = args.output if args.output != "output.docx" else derived_output
+        return base_url, parts, output_path
+
+    base_url = args.base_url or input("Enter BASE URL pattern: ").strip()
+    while "{}" not in base_url:
+        print("BASE URL must include '{}' for the part number.")
+        base_url = input("Enter BASE URL pattern: ").strip()
+
+    parts = args.parts
+    while parts is None or parts < 1:
+        raw_parts = input("Enter PARTS count: ").strip()
+        try:
+            parts = int(raw_parts)
+        except ValueError:
+            parts = None
+        if parts is None or parts < 1:
+            print("PARTS must be a positive integer.")
+
+    return base_url, parts, args.output
+
+
+if __name__ == "__main__":
+    BASE_URL, PARTS, OUTPUT_PATH = _resolve_inputs()
 
     all_elements: list = []
     for part in range(1, PARTS + 1):
@@ -485,4 +571,4 @@ if __name__ == "__main__":
             print(f"  -> Failed to fetch Part {part}: {e}")
 
     print(f"\nTotal elements across all parts: {len(all_elements)}")
-    save_to_word(all_elements, output_path="output.docx")
+    save_to_word(all_elements, output_path=OUTPUT_PATH)
